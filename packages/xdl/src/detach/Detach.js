@@ -322,18 +322,6 @@ async function detachAndroidAsync(context, expoViewUrl) {
   logger.info('Android detach is complete!\n');
 }
 
-async function ensureBuildConstantsExistsIOSAsync(configFilePath) {
-  // EXBuildConstants is included in newer ExpoKit projects.
-  // create it if it doesn't exist.
-  const doesBuildConstantsExist = fs.existsSync(
-    path.join(configFilePath, 'EXBuildConstants.plist')
-  );
-  if (!doesBuildConstantsExist) {
-    await IosPlist.createBlankAsync(configFilePath, 'EXBuildConstants');
-    logger.info('Created `EXBuildConstants.plist` because it did not exist yet');
-  }
-}
-
 async function _getIosExpoKitVersionThrowErrorAsync(iosProjectDirectory) {
   let expoKitVersion = '';
   const podfileLockPath = path.join(iosProjectDirectory, 'Podfile.lock');
@@ -355,15 +343,6 @@ async function readNullableConfigJsonAsync(projectDir) {
     return getConfig(projectDir);
   } catch (_) {
     return null;
-  }
-}
-
-async function prepareDetachedBuildIosAsync(projectDir, args) {
-  const config = await readNullableConfigJsonAsync(projectDir);
-  if (config) {
-    return prepareDetachedUserContextIosAsync(projectDir, config.exp, args);
-  } else {
-    return prepareDetachedServiceContextIosAsync(projectDir, args);
   }
 }
 
@@ -433,58 +412,9 @@ async function _readDefaultApiKeysAsync(jsonFilePath) {
   return null;
 }
 
-async function prepareDetachedUserContextIosAsync(projectDir, exp, args) {
-  const context = StandaloneContext.createUserContext(projectDir, exp);
-  let { iosProjectDirectory, supportingDirectory } = IosWorkspace.getPaths(context);
-
-  logger.info(`Preparing iOS build at ${iosProjectDirectory}...`);
-  // These files cause @providesModule naming collisions
-  // but are not available until after `pod install` has run.
-  let podsDirectory = path.join(iosProjectDirectory, 'Pods');
-  if (!isDirectory(podsDirectory)) {
-    throw new Error(`Can't find directory ${podsDirectory}, make sure you've run pod install.`);
-  }
-  let rnPodDirectory = path.join(podsDirectory, 'React');
-  if (isDirectory(rnPodDirectory)) {
-    let rnFilesToDelete = await glob(rnPodDirectory + '/**/*.@(js|json)');
-    if (rnFilesToDelete) {
-      for (let i = 0; i < rnFilesToDelete.length; i++) {
-        await fs.unlink(rnFilesToDelete[i]);
-      }
-    }
-  }
-
-  // insert expo development url into iOS config
-  if (!args.skipXcodeConfig) {
-    // populate EXPO_RUNTIME_VERSION from ExpoKit pod version
-    const expoKitVersion = await _getIosExpoKitVersionThrowErrorAsync(iosProjectDirectory);
-
-    // populate development url
-    let devUrl = await UrlUtils.constructManifestUrlAsync(projectDir);
-
-    // populate default api keys
-    const defaultApiKeys = await _readDefaultApiKeysAsync(
-      path.join(podsDirectory, 'ExpoKit', 'template-files', 'keys.json')
-    );
-
-    await ensureBuildConstantsExistsIOSAsync(supportingDirectory);
-    await IosPlist.modifyAsync(supportingDirectory, 'EXBuildConstants', constantsConfig => {
-      constantsConfig.developmentUrl = devUrl;
-      constantsConfig.EXPO_RUNTIME_VERSION = expoKitVersion;
-      if (defaultApiKeys) {
-        constantsConfig.DEFAULT_API_KEYS = defaultApiKeys;
-      }
-      if (exp.sdkVersion) {
-        constantsConfig.TEMPORARY_SDK_VERSION = exp.sdkVersion;
-      }
-      return constantsConfig;
-    });
-  }
-}
-
 export async function prepareDetachedBuildAsync(projectDir, args) {
   if (args.platform === 'ios') {
-    await prepareDetachedBuildIosAsync(projectDir, args);
+    await prepareDetachedServiceContextIosAsync(projectDir, args);
   } else {
     let androidProjectDirectory = path.join(projectDir, 'android');
     let expoBuildConstantsMatches = await glob(
@@ -510,10 +440,6 @@ export async function prepareDetachedBuildAsync(projectDir, args) {
 // `android/app/expo.gradle` for an example).
 export async function bundleAssetsAsync(projectDir, args) {
   const options = await readNullableConfigJsonAsync(projectDir);
-  if (!options) {
-    // Don't run assets bundling for the service context.
-    return;
-  }
   const { exp } = options;
   let bundledManifestPath = EmbeddedAssets.getEmbeddedManifestPath(args.platform, projectDir, exp);
   if (!bundledManifestPath) {
